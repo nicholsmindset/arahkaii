@@ -1,158 +1,138 @@
 import { AnalyticsMetrics, VendorPerformance } from './types';
-import { mockMetrics, mockVendorPerformance } from './mock';
+import { supabase } from '@/lib/supabase';
 
 export class AnalyticsService {
   async getDashboardMetrics(): Promise<AnalyticsMetrics> {
-    return mockMetrics;
-  }
+    try {
+      // Get total sales
+      const { data: ordersData, error: ordersError } = await supabase
+        .from('orders')
+        .select('total_amount')
+        .eq('status', 'completed');
 
-  private calculateDailySales(orders: any[]): number[] {
-    const dailySales = Array(30).fill(0);
-    
-    orders.forEach(order => {
-      const date = new Date(order.created_at);
-      const daysAgo = Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24));
-      if (daysAgo < 30) {
-        dailySales[daysAgo] += order.total_amount;
-      }
-    });
+      if (ordersError) throw ordersError;
 
-    return dailySales.reverse();
-  }
+      // Get daily sales
+      const { data: dailySalesData, error: dailySalesError } = await supabase
+        .from('orders')
+        .select('total_amount, created_at')
+        .eq('status', 'completed')
+        .order('created_at', { ascending: true });
 
-  private async getUserCount(): Promise<number> {
-    const { count } = await supabase
-      .from('users')
-      .select('*', { count: 'exact' });
+      if (dailySalesError) throw dailySalesError;
 
-    return count || 0;
-  }
+      // Get user counts
+      const { count: userCount, error: userCountError } = await supabase
+        .from('users')
+        .select('*', { count: 'exact' });
 
-  private async getActiveUsers(): Promise<number> {
-    const { count } = await supabase
-      .from('user_activity')
-      .select('*', { count: 'exact' })
-      .gte('last_active_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+      if (userCountError) throw userCountError;
 
-    return count || 0;
-  }
+      // Get active users (last 30 days)
+      const { count: activeUsers, error: activeUsersError } = await supabase
+        .from('users')
+        .select('*', { count: 'exact' })
+        .gte('last_login', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
 
-  private async getConversionRate(): Promise<number> {
-    const { count: visitors } = await supabase
-      .from('visitors')
-      .select('*', { count: 'exact' });
+      if (activeUsersError) throw activeUsersError;
 
-    const { count: orders } = await supabase
-      .from('orders')
-      .select('*', { count: 'exact' });
+      // Get conversion rate
+      const { count: totalOrders, error: totalOrdersError } = await supabase
+        .from('orders')
+        .select('*', { count: 'exact' });
 
-    return visitors ? (orders / visitors) * 100 : 0;
-  }
+      if (totalOrdersError) throw totalOrdersError;
 
-  private calculateAverageOrderValue(orders: any[]): number {
-    const total = orders.reduce((sum, order) => sum + order.total_amount, 0);
-    return orders.length > 0 ? total / orders.length : 0;
-  }
+      const { count: totalVisits, error: totalVisitsError } = await supabase
+        .from('users')
+        .select('*', { count: 'exact' });
 
-  private async getTopProducts(): Promise<AnalyticsMetrics['topProducts']> {
-    const { data, error } = await supabase
-      .from('products')
-      .select('id, name, sales, revenue')
-      .order('sales', { ascending: false })
-      .limit(10);
+      if (totalVisitsError) throw totalVisitsError;
 
-    if (error) throw error;
-    return data || [];
-  }
+      // Get top products using SQL function
+      const { data: topProductsData, error: topProductsError } = await supabase
+        .rpc('get_top_products', { days: 30 });
 
-  private async getUserDemographics(): Promise<AnalyticsMetrics['userDemographics']> {
-    const { data, error } = await supabase
-      .from('users')
-      .select('age_group, location');
+      if (topProductsError) throw topProductsError;
 
-    if (error) throw error;
+      // Get user demographics using SQL function
+      const { data: demographicsData, error: demographicsError } = await supabase
+        .rpc('get_user_demographics');
 
-    const demographics = {
-      ageGroups: {} as { [key: string]: number },
-      locations: {} as { [key: string]: number },
-    };
+      if (demographicsError) throw demographicsError;
 
-    data.forEach(user => {
-      demographics.ageGroups[user.age_group] = (demographics.ageGroups[user.age_group] || 0) + 1;
-      demographics.locations[user.location] = (demographics.locations[user.location] || 0) + 1;
-    });
+      // Get product categories using SQL function
+      const { data: categoryData, error: categoryError } = await supabase
+        .rpc('get_product_categories');
 
-    return demographics;
-  }
+      if (categoryError) throw categoryError;
 
-  private async getProductCategories(): Promise<AnalyticsMetrics['productCategories']> {
-    const { data, error } = await supabase
-      .from('products')
-      .select('category')
-      .group('category')
-      .count();
-
-    if (error) throw error;
-
-    return data.reduce((acc: { [key: string]: number }, item) => {
-      acc[item.category] = item.count;
-      return acc;
-    }, {});
+      return {
+        totalSales: ordersData?.reduce((sum, order) => sum + order.total_amount, 0) || 0,
+        dailySales: dailySalesData?.map(order => order.total_amount) || [],
+        userCount: userCount || 0,
+        activeUsers: activeUsers || 0,
+        conversionRate: totalVisits > 0 ? (totalOrders / totalVisits) * 100 : 0,
+        averageOrderValue: ordersData?.length > 0 ? 
+          ordersData.reduce((sum, order) => sum + order.total_amount, 0) / ordersData.length : 0,
+        topProducts: topProductsData?.map(product => ({
+          id: product.product_id,
+          name: product.name, // Add name field to match type definition
+          sales: product.total_quantity,
+          revenue: product.total_revenue
+        })) || [],
+        userDemographics: {
+          ageGroups: demographicsData?.reduce((acc, item) => {
+            acc[item.age_group] = item.age_count;
+            return acc;
+          }, {}) || {},
+          locations: demographicsData?.reduce((acc, item) => {
+            acc[item.location] = item.location_count;
+            return acc;
+          }, {}) || {}
+        },
+        productCategories: categoryData?.reduce((acc, item) => {
+          acc[item.category] = item.count; // Simplify to match type definition
+          return acc;
+        }, {}) || {}
+      };
+    } catch (error) {
+      console.error('Error fetching dashboard metrics:', error);
+      throw error;
+    }
   }
 
   async getVendorPerformance(vendorId: string): Promise<VendorPerformance> {
-    return mockVendorPerformance;
-  }
+    try {
+      // Get vendor performance using SQL function
+      const { data: vendorData, error: vendorError } = await supabase
+        .rpc('get_vendor_performance', { vendor_id: vendorId });
 
-  private async getVendorName(vendorId: string): Promise<string> {
-    const { data, error } = await supabase
-      .from('vendors')
-      .select('name')
-      .eq('id', vendorId)
-      .single();
+      if (vendorError) throw vendorError;
 
-    if (error) throw error;
-    return data?.name || '';
-  }
-
-  private async getVendorReturnRate(vendorId: string): Promise<number> {
-    const { count: returns } = await supabase
-      .from('returns')
-      .select('*', { count: 'exact' })
-      .eq('vendor_id', vendorId);
-
-    const { count: orders } = await supabase
-      .from('orders')
-      .select('*', { count: 'exact' })
-      .eq('vendor_id', vendorId);
-
-    return orders ? (returns / orders) * 100 : 0;
-  }
-
-  private calculateDeliveryPerformance(deliveries: any[]): {
-    onTime: number;
-    delayed: number;
-    total: number;
-  } {
-    const performance = {
-      onTime: 0,
-      delayed: 0,
-      total: deliveries.length
-    };
-
-    deliveries.forEach(delivery => {
-      if (delivery.status === 'delivered') {
-        const deliveryTime = new Date(delivery.delivered_at).getTime() - new Date(delivery.created_at).getTime();
-        const expectedTime = delivery.expected_delivery_time * 24 * 60 * 60 * 1000;
-        
-        if (deliveryTime <= expectedTime) {
-          performance.onTime++;
-        } else {
-          performance.delayed++;
-        }
+      const vendor = vendorData?.[0];
+      
+      if (!vendor) {
+        throw new Error('Vendor not found');
       }
-    });
 
-    return performance;
+      return {
+        vendorId: vendor.vendor_id,
+        vendorName: vendor.vendor_name,
+        sales: vendor.total_sales,
+        revenue: vendor.total_revenue,
+        averageRating: vendor.average_rating,
+        orderCount: vendor.order_count,
+        returnRate: 0, // Will need to implement return tracking
+        deliveryPerformance: {
+          onTime: vendor.on_time_deliveries,
+          delayed: vendor.delayed_deliveries,
+          total: vendor.total_deliveries
+        }
+      };
+    } catch (error) {
+      console.error('Error fetching vendor performance:', error);
+      throw error;
+    }
   }
-}
+

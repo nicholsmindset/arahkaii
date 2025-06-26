@@ -16,6 +16,10 @@ import Blog from "./pages/Blog";
 import BlogPost from "./pages/BlogPost";
 import NotFound from "./pages/NotFound";
 import Analytics from "./pages/analytics";
+import { VendorLogin } from "./features/auth/components/VendorLogin";
+import { AdminLogin } from "./features/auth/components/AdminLogin";
+import { ProtectedRoute } from "./features/auth/components/ProtectedRoute";
+import { OnboardingWizard } from "./features/onboarding/components/OnboardingWizard";
 
 const queryClient = new QueryClient();
 
@@ -26,6 +30,7 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <Routes>
+          {/* Public routes */}
           <Route path="/" element={<Index />} />
           <Route path="/brands" element={<Brands />} />
           <Route path="/categories" element={<Categories />} />
@@ -33,11 +38,56 @@ const App = () => (
           <Route path="/blog" element={<Blog />} />
           <Route path="/blog/:slug" element={<BlogPost />} />
           <Route path="/vendor-apply" element={<VendorApply />} />
-          <Route path="/vendor-dashboard" element={<VendorDashboard />} />
-          <Route path="/vendor-backoffice/*" element={<VendorBackoffice />} />
+          
+          {/* Vendor routes */}
+          <Route path="/vendor" element={<VendorLogin />} />
+          <Route
+            path="/vendor/onboarding"
+            element={
+              <ProtectedRoute requiredRole="vendor">
+                <OnboardingWizard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/vendor-dashboard"
+            element={
+              <ProtectedRoute requiredRole="vendor">
+                <VendorDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/vendor-backoffice/*"
+            element={
+              <ProtectedRoute requiredRole="vendor">
+                <VendorBackoffice />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/vendor-shop/:vendorId" element={<VendorShop />} />
-          <Route path="/admin-dashboard" element={<AdminDashboard />} />
-          <Route path="/analytics" element={<Analytics />} />
+
+          {/* Admin routes */}
+          <Route path="/admin" element={<AdminLogin />} />
+          <Route
+            path="/admin-dashboard"
+            element={
+              <ProtectedRoute requiredRole="admin">
+                <AdminDashboard />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Analytics route (requires admin access) */}
+          <Route
+            path="/analytics"
+            element={
+              <ProtectedRoute requiredRole="admin">
+                <Analytics />
+              </ProtectedRoute>
+            }
+          />
+
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
